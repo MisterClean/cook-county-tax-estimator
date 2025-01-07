@@ -22,7 +22,7 @@ download.file(
 )
 ```
 
-The download is approximately 2GB in size. The database file will be saved as `ptaxsim.db` in your project directory.
+The download is approximately **8.8GB** in size. The database file will be saved as `ptaxsim.db` in your project directory.
 
 If you encounter any issues with the direct download, you can:
 1. Visit https://ptaxsim.s3.amazonaws.com/ptaxsim.db in your browser
@@ -41,4 +41,4 @@ Open `lakeview_corridor_analysis.Rmd` in RStudio and click "Knit" to generate th
 
 ## Data Source
 
-The analysis uses the Cook County Property Tax Simulator database (PTAXSIM), which is hosted on AWS S3. The database is not included in this repository due to its size (~2GB), but can be downloaded using the R command in the Setup section above. PTAXSIM contains historical Cook County property tax data including assessed values, exemptions, tax rates, and final tax bills for all parcels in Cook County.
+The analysis uses the Cook County Property Tax Simulator database (PTAXSIM), which is hosted on AWS S3. The database is not included in this repository due to its size (**~8.8GB**), but can be downloaded using the R command in the Setup section above. PTAXSIM contains historical Cook County property tax data including assessed values, exemptions, tax rates, and final tax bills for all parcels in Cook County.
