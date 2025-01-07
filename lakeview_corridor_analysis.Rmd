@@ -1,0 +1,257 @@
+---
+title: "Lake View Township Broadway Corridor Rezoning Analysis"
+author: "Cook County Potential"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  github_document:
+    html_preview: true
+    fig_width: 8
+    fig_height: 6
+    dev: png
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6,
+  dev = 'png',
+  dpi = 300
+)
+
+# Load required packages
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("knitr")) install.packages("knitr")
+if (!require("scales")) install.packages("scales")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("DBI")) install.packages("DBI")
+if (!require("RSQLite")) install.packages("RSQLite")
+if (!require("ggtext")) install.packages("ggtext")
+
+library(tidyverse)
+library(knitr)
+library(scales)
+library(ggplot2)
+library(DBI)
+library(RSQLite)
+library(ggtext)
+
+# Helper functions for formatting
+format_currency <- function(x) {
+  scales::dollar(x, accuracy = 1)
+}
+
+format_number <- function(x) {
+  scales::comma(x, accuracy = 1)
+}
+
+format_percent <- function(x) {
+  scales::percent(x/100, accuracy = 0.1)
+}
+
+# Modern color palette
+modern_palette <- c("#2E86AB", "#A23B72", "#F18F01")
+
+# Connect to the database
+ptaxsim_db_conn <- DBI::dbConnect(RSQLite::SQLite(), "/Users/mmclean/dev/r/cook-county-potential/ptaxsim.db")
+```
+
+## Lake View Township Market Value Analysis
+
+First, let's analyze the current property values in Lake View Township, focusing on class 206 (4-6 unit) apartment buildings from 2019-2023, as these will serve as our baseline for per-unit tax revenue.
+
+```{r market_value_analysis}
+# Query Lake View township properties (2019-2023) with focus on class 206
+query <- "
+WITH pin_averages AS (
+  SELECT 
+    pin,
+    class,
+    AVG(av_clerk) as avg_assessed_value,
+    AVG(tax_bill_total) as avg_tax_bill,
+    CASE
+      WHEN class = '206' THEN 5    -- Assuming 5 units for class 206
+      ELSE 1
+    END as estimated_units
+  FROM pin
+  WHERE substr(tax_code_num, 1, 2) = '73'  -- Lake View township
+    AND year >= 2019 
+    AND year <= 2023
+    AND class = '206'  -- Focus on 4-6 unit buildings
+  GROUP BY pin, class
+),
+percentile_calc AS (
+  SELECT 
+    class,
+    avg_assessed_value,
+    avg_tax_bill,
+    estimated_units,
+    NTILE(4) OVER (PARTITION BY class ORDER BY avg_tax_bill) as quartile
+  FROM pin_averages
+)
+SELECT 
+  class,
+  COUNT(*) as total_properties,
+  AVG(CASE WHEN quartile = 4 THEN avg_tax_bill END) as p75_tax_bill,
+  AVG(avg_tax_bill) as mean_tax_bill,
+  MAX(estimated_units) as units_per_building
+FROM percentile_calc
+GROUP BY class
+"
+
+# Execute query and format results
+property_stats <- DBI::dbGetQuery(ptaxsim_db_conn, query) %>%
+  mutate(
+    property_type = "4-6 Unit Building",
+    # Calculate per-unit values
+    p75_value_per_unit = p75_tax_bill / units_per_building,
+    mean_value_per_unit = mean_tax_bill / units_per_building
+  )
+
+# Display the results
+property_stats %>%
+  select(
+    property_type,
+    total_properties,
+    p75_value_per_unit,
+    mean_value_per_unit,
+    units_per_building
+  ) %>%
+  mutate(
+    p75_value_per_unit = scales::dollar(p75_value_per_unit),
+    mean_value_per_unit = scales::dollar(mean_value_per_unit)
+  ) %>%
+  kable(
+    col.names = c(
+      "Property Type",
+      "Total Properties",
+      "75th Percentile Tax Bill (per unit)",
+      "Mean Tax Bill (per unit)",
+      "Units per Building"
+    ),
+    caption = "Lake View Township Class 206 Property Statistics (2019-2023 Averages)"
+  )
+
+```
+
+### Key Findings from Market Value Analysis
+
+1. **Property Analysis**: We analyzed existing 4-6 unit apartment buildings (class 206) in Lake View Township, assuming an average of 5 units per building, to establish a baseline for per-unit tax revenue.
+
+2. **Tax Revenue Patterns**: The 75th percentile tax bills per unit for class 206 buildings show the revenue potential for new development:
+   - Per Unit Tax Bill: ${format_currency(property_stats$p75_value_per_unit)}
+
+3. **Building Scale**: While our baseline is derived from 5-unit buildings, new construction along Broadway may vary in size based on lot dimensions and zoning allowances.
+
+## Broadway Corridor Rezoning Analysis
+
+This analysis examines the potential property tax revenue impact of rezoning the Broadway corridor between Devon and Montrose in Lake View Township. The proposed rezoning would increase the allowed units from 8,874 to 18,073 units.
+
+## Development Scenarios
+
+We'll analyze three scenarios based on different absorption rates of the total allowed capacity:
+
+1. 30% of allowed capacity (5,422 units)
+2. 45% of allowed capacity (8,133 units)
+3. 60% of allowed capacity (10,844 units)
+
+For each scenario, we'll use the 75th percentile tax bill per unit from Lake View Township class 206 buildings as our baseline per-unit revenue.
+
+```{r scenario_calculations, fig.width=8, fig.height=6, echo=FALSE}
+# Define baseline numbers
+total_allowed <- 18073
+base_tax_bill <- property_stats$p75_value_per_unit
+
+# Calculate scenarios
+scenarios <- tribble(
+  ~scenario, ~absorption_rate, ~total_new_units,
+  "Low Growth", 0.30, round(total_allowed * 0.30),
+  "Medium Growth", 0.45, round(total_allowed * 0.45),
+  "High Growth", 0.60, round(total_allowed * 0.60)
+) %>%
+  mutate(
+    scenario = factor(scenario, 
+                     levels = c("Low Growth", "Medium Growth", "High Growth"),
+                     ordered = TRUE)
+) %>%
+  mutate(
+    tax_revenue = total_new_units * base_tax_bill,
+    total_new_units_formatted = format(total_new_units, big.mark = ",")
+  )
+
+# Create summary table
+scenarios %>%
+  select(scenario, total_new_units, tax_revenue) %>%
+  mutate(
+    total_new_units = format_number(total_new_units),
+    tax_revenue = format_currency(tax_revenue)
+  ) %>%
+  kable(col.names = c("Scenario", "Total Units", "Annual Tax Revenue"),
+        caption = "Projected Annual Tax Revenue by Development Scenario")
+
+# Create and display visualization
+ggplot(scenarios, 
+       aes(x = scenario, 
+           y = tax_revenue/1e6)) +
+  geom_col(fill = "#54bebe", width = 0.7) +
+  geom_text(aes(label = scales::dollar(tax_revenue/1e6, accuracy = 0.1, suffix = "M")),
+            vjust = -0.5,
+            size = 3,
+            family = "Arial") +
+  scale_x_discrete(labels = function(x) {
+    paste0(x, "\n", 
+           scenarios$total_new_units_formatted[match(x, scenarios$scenario)], " units\n",
+           round(scenarios$absorption_rate[match(x, scenarios$scenario)] * 100), "% absorption")
+  }) +
+  scale_y_continuous(labels = function(x) scales::dollar(x, suffix = "M", big.mark = ","),
+                    expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Projected Annual Tax Revenue by Development Scenario",
+    subtitle = "Broadway Corridor Rezoning Impact",
+    x = "",
+    y = "Tax Revenue (Millions)",
+        y = "Tax Revenue (Millions)",
+    caption = "<span style='font-family:Arial'>Chart: Michael McLean • @mclean.bsky.social<br>
+Data: Cook County Assessor's Office PTAXSIM, retreived Jan 4th 2025<br><br>
+Methodology:<br>
+Analysis based on 75th percentile tax bills from existing 4-6 unit buildings in Lake View Township (2019-2023). Revenue projections calculated<br>
+using per-unit tax revenue baseline applied to three development scenarios ranging from 30-60% absorption of total allowed units under proposed rezoning.</span>"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.01, face = "bold", margin = margin(b = 5), family = "Arial"),
+    plot.subtitle = element_text(hjust = 0.01, size = 8, family = "Arial"),
+    axis.text.y = element_text(color = "#666666", family = "Arial"),
+    axis.text.x = element_text(color = "black", face = "bold", family = "Arial", hjust = 0.5),
+    panel.border = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.background = element_rect(fill = "#FFFCF7"),
+    panel.background = element_rect(fill = "#FFFCF7"),
+    panel.grid.major.x = element_line(color = "#f0f0f0", linewidth = 0.3),
+    panel.grid.major.y = element_line(color = "#f0f0f0", linewidth = 0.3),
+    text = element_text(family = "Arial"),
+    axis.line = element_line(color = "#666666"),
+    axis.ticks = element_line(color = "#666666"),
+    axis.title = element_text(color = "#666666"),
+    axis.title.y = element_text(size = 8),
+    plot.margin = margin(t = 15, r = 20, b = 15, l = 15, unit = "pt"),
+    plot.caption = element_markdown(color = "#404040", hjust = 0, size = 7.5)
+  )
+```
+
+## Key Findings
+
+The analysis shows that rezoning could generate significant tax revenue while staying well below maximum capacity:
+
+1. Even at 30% absorption (5,422 units), the corridor would generate substantial new tax revenue
+2. Medium growth at 45% (8,133 units) balances revenue potential with manageable growth
+3. High growth at 60% (10,844 units) maximizes revenue while maintaining 40% capacity buffer
+
+Revenue estimates use 75th percentile tax bills from existing 4-6 unit buildings as baseline.
+
+```{r cleanup}
+# Close database connection
+DBI::dbDisconnect(ptaxsim_db_conn)
+```

@@ -1,0 +1,17 @@
+# macOS specific
+.DS_Store
+
+# R specific
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Database files
+*.db
+ptaxsim.db
+
+# Output files
+*.html
+# Keep R markdown output files but ignore other R files
+!lakeview_corridor_analysis_files/
